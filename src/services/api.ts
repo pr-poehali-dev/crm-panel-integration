@@ -1,156 +1,360 @@
 
-const API_URL = 'https://api.example.com'; // Замените на URL вашего API
+// Настройки API
+const API_BASE_URL = import.meta.env.VITE_API_URL || 'https://api.example.com/v1';
+const API_TIMEOUT = 15000; // 15 секунд таймаут
 
-// Функция для выполнения fetch-запросов с обработкой ошибок
-const fetchApi = async (endpoint: string, options: RequestInit = {}) => {
-  // Получаем токен из localStorage
+// Типы для работы с API
+export type ApiResponse<T = any> = {
+  success: boolean;
+  data?: T;
+  error?: string;
+  message?: string;
+  statusCode?: number;
+};
+
+export type PaginatedResponse<T = any> = {
+  items: T[];
+  total: number;
+  page: number;
+  pageSize: number;
+  totalPages: number;
+};
+
+export type QueryParams = Record<string, string | number | boolean | undefined>;
+
+// Хелпер для формирования URL с параметрами
+const buildUrl = (endpoint: string, params?: QueryParams): string => {
+  const url = new URL(`${API_BASE_URL}${endpoint}`);
+  
+  if (params) {
+    Object.entries(params).forEach(([key, value]) => {
+      if (value !== undefined) {
+        url.searchParams.append(key, String(value));
+      }
+    });
+  }
+  
+  return url.toString();
+};
+
+// Основной метод для выполнения запросов
+const apiRequest = async <T = any>(
+  endpoint: string,
+  method: string = 'GET',
+  data?: any,
+  params?: QueryParams
+): Promise<ApiResponse<T>> => {
+  const url = buildUrl(endpoint, params);
+  
+  // Получаем токен авторизации
   const token = localStorage.getItem('auth-token');
   
-  // Устанавливаем заголовки по умолчанию
-  const headers = {
+  // Формируем заголовки
+  const headers: HeadersInit = {
     'Content-Type': 'application/json',
-    ...(token ? { 'Authorization': `Bearer ${token}` } : {}),
-    ...options.headers,
+    'Accept': 'application/json',
   };
   
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  
+  // Опции запроса
+  const options: RequestInit = {
+    method,
+    headers,
+    credentials: 'include', // Для работы с cookies
+  };
+  
+  // Добавляем тело запроса для не-GET методов
+  if (data && method !== 'GET') {
+    options.body = JSON.stringify(data);
+  }
+  
   try {
-    const response = await fetch(`${API_URL}${endpoint}`, {
-      ...options,
-      headers,
+    // Запрос с таймаутом
+    const timeoutPromise = new Promise<never>((_, reject) => {
+      setTimeout(() => reject(new Error('Request timeout')), API_TIMEOUT);
     });
     
-    // Если ответ не 2xx, выкидываем ошибку
+    const responsePromise = fetch(url, options);
+    const response = await Promise.race([responsePromise, timeoutPromise]) as Response;
+    
+    // Обработка ошибок HTTP
     if (!response.ok) {
-      // Проверяем на ошибку авторизации
       if (response.status === 401) {
-        // Удаляем токен, если он устарел или невалиден
+        // Автоматический выход при истечении токена
         localStorage.removeItem('auth-token');
-        // Если мы не на странице логина, перенаправляем на неё
         if (window.location.pathname !== '/login') {
           window.location.href = '/login';
         }
+        return { 
+          success: false, 
+          error: 'Unauthorized', 
+          statusCode: 401,
+          message: 'Сессия истекла. Пожалуйста, войдите снова'
+        };
       }
       
-      const errorData = await response.json().catch(() => ({}));
-      throw new Error(errorData.message || `Ошибка ${response.status}: ${response.statusText}`);
+      // Пытаемся получить детали ошибки из тела ответа
+      let errorData;
+      try {
+        errorData = await response.json();
+      } catch {
+        errorData = { message: response.statusText };
+      }
+      
+      return { 
+        success: false, 
+        error: errorData.error || response.statusText,
+        message: errorData.message || 'Произошла ошибка при выполнении запроса',
+        statusCode: response.status
+      };
     }
     
-    // Если ответ пустой или не содержит JSON
+    // Для ответов без контента
     if (response.status === 204 || response.headers.get('content-length') === '0') {
-      return null;
+      return { success: true };
     }
     
-    return await response.json();
+    // Парсим JSON ответ
+    const responseData = await response.json();
+    return { 
+      success: true, 
+      data: responseData.data || responseData,
+      message: responseData.message
+    };
+    
   } catch (error) {
-    console.error('API Error:', error);
-    throw error;
+    console.error('API Request failed:', error);
+    return { 
+      success: false, 
+      error: error instanceof Error ? error.message : 'Неизвестная ошибка',
+      message: 'Не удалось выполнить запрос к серверу' 
+    };
   }
 };
 
-// Сервис для аутентификации
+// Сервис аутентификации
+export interface LoginData {
+  email: string;
+  password: string;
+}
+
+export interface RegisterData {
+  name: string;
+  email: string;
+  password: string;
+}
+
+export interface User {
+  id: string;
+  name: string;
+  email: string;
+  role: string;
+  avatar?: string;
+  createdAt?: string;
+  status?: 'active' | 'inactive' | 'suspended';
+}
+
 export const authService = {
-  // Авторизация пользователя
-  login: async (email: string, password: string) => {
-    return fetchApi('/auth/login', {
-      method: 'POST',
-      body: JSON.stringify({ email, password }),
-    });
-  },
+  login: (data: LoginData) => 
+    apiRequest<{user: User, token: string}>('/auth/login', 'POST', data),
   
-  // Регистрация нового пользователя
-  register: async (userData: { name: string, email: string, password: string }) => {
-    return fetchApi('/auth/register', {
-      method: 'POST',
-      body: JSON.stringify(userData),
-    });
-  },
+  register: (data: RegisterData) => 
+    apiRequest<{user: User, token: string}>('/auth/register', 'POST', data),
   
-  // Выход из системы
-  logout: () => {
-    localStorage.removeItem('auth-token');
-  },
+  me: () => 
+    apiRequest<User>('/auth/me'),
   
-  // Проверка авторизации
-  checkAuth: async () => {
-    return fetchApi('/auth/me');
-  },
+  logout: () => 
+    apiRequest('/auth/logout', 'POST'),
+  
+  refreshToken: () => 
+    apiRequest<{token: string}>('/auth/refresh-token', 'POST'),
+    
+  forgotPassword: (email: string) => 
+    apiRequest('/auth/forgot-password', 'POST', { email }),
+    
+  resetPassword: (token: string, password: string) => 
+    apiRequest('/auth/reset-password', 'POST', { token, password })
 };
 
 // Сервис для работы с пользователями
+export interface UserCreateData {
+  name: string;
+  email: string;
+  password: string;
+  role: string;
+}
+
+export interface UserUpdateData {
+  name?: string;
+  email?: string;
+  role?: string;
+  status?: 'active' | 'inactive' | 'suspended';
+}
+
 export const userService = {
-  // Получение списка пользователей
-  getUsers: async (page = 1, limit = 10) => {
-    return fetchApi(`/users?page=${page}&limit=${limit}`);
-  },
+  getAll: (params?: { page?: number; limit?: number; search?: string; role?: string; status?: string }) => 
+    apiRequest<PaginatedResponse<User>>('/users', 'GET', undefined, params),
   
-  // Получение конкретного пользователя
-  getUser: async (id: string) => {
-    return fetchApi(`/users/${id}`);
-  },
+  getById: (id: string) => 
+    apiRequest<User>(`/users/${id}`),
   
-  // Создание пользователя
-  createUser: async (userData: any) => {
-    return fetchApi('/users', {
-      method: 'POST',
-      body: JSON.stringify(userData),
-    });
-  },
+  create: (data: UserCreateData) => 
+    apiRequest<User>('/users', 'POST', data),
   
-  // Обновление пользователя
-  updateUser: async (id: string, userData: any) => {
-    return fetchApi(`/users/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(userData),
-    });
-  },
+  update: (id: string, data: UserUpdateData) => 
+    apiRequest<User>(`/users/${id}`, 'PUT', data),
   
-  // Удаление пользователя
-  deleteUser: async (id: string) => {
-    return fetchApi(`/users/${id}`, {
-      method: 'DELETE',
-    });
-  },
+  delete: (id: string) => 
+    apiRequest(`/users/${id}`, 'DELETE'),
+    
+  exportUsers: (format: 'csv' | 'excel' = 'csv') => 
+    apiRequest(`/users/export?format=${format}`)
 };
 
 // Сервис для работы с заказами
+export interface OrderItem {
+  productId: string;
+  productName: string;
+  price: number;
+  quantity: number;
+}
+
+export interface Order {
+  id: string;
+  userId: string;
+  customerName: string;
+  customerEmail: string;
+  items: OrderItem[];
+  total: number;
+  status: 'pending' | 'processing' | 'completed' | 'cancelled';
+  paymentStatus: 'pending' | 'paid' | 'failed';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface OrderCreateData {
+  userId: string;
+  customerName: string;
+  customerEmail: string;
+  items: OrderItem[];
+}
+
+export interface OrderUpdateData {
+  status?: 'pending' | 'processing' | 'completed' | 'cancelled';
+  paymentStatus?: 'pending' | 'paid' | 'failed';
+}
+
 export const orderService = {
-  // Получение списка заказов
-  getOrders: async (page = 1, limit = 10) => {
-    return fetchApi(`/orders?page=${page}&limit=${limit}`);
-  },
+  getAll: (params?: { page?: number; limit?: number; search?: string; status?: string; from?: string; to?: string }) => 
+    apiRequest<PaginatedResponse<Order>>('/orders', 'GET', undefined, params),
   
-  // Получение конкретного заказа
-  getOrder: async (id: string) => {
-    return fetchApi(`/orders/${id}`);
-  },
+  getById: (id: string) => 
+    apiRequest<Order>(`/orders/${id}`),
   
-  // Создание заказа
-  createOrder: async (orderData: any) => {
-    return fetchApi('/orders', {
-      method: 'POST',
-      body: JSON.stringify(orderData),
-    });
-  },
+  create: (data: OrderCreateData) => 
+    apiRequest<Order>('/orders', 'POST', data),
   
-  // Обновление заказа
-  updateOrder: async (id: string, orderData: any) => {
-    return fetchApi(`/orders/${id}`, {
-      method: 'PUT',
-      body: JSON.stringify(orderData),
-    });
-  },
+  update: (id: string, data: OrderUpdateData) => 
+    apiRequest<Order>(`/orders/${id}`, 'PUT', data),
   
-  // Удаление заказа
-  deleteOrder: async (id: string) => {
-    return fetchApi(`/orders/${id}`, {
-      method: 'DELETE',
-    });
-  },
+  delete: (id: string) => 
+    apiRequest(`/orders/${id}`, 'DELETE'),
+    
+  getOrdersByUser: (userId: string, params?: { page?: number; limit?: number }) => 
+    apiRequest<PaginatedResponse<Order>>(`/users/${userId}/orders`, 'GET', undefined, params),
+    
+  exportOrders: (format: 'csv' | 'excel' = 'csv', params?: { from?: string; to?: string; status?: string }) => 
+    apiRequest(`/orders/export?format=${format}`, 'GET', undefined, params)
 };
 
-// Экспортируем интерфейс API
-export default {
+// Сервис для работы с продуктами
+export interface Product {
+  id: string;
+  name: string;
+  description: string;
+  price: number;
+  stock: number;
+  category: string;
+  images: string[];
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface ProductCreateData {
+  name: string;
+  description: string;
+  price: number;
+  stock: number;
+  category: string;
+  images?: string[];
+}
+
+export interface ProductUpdateData {
+  name?: string;
+  description?: string;
+  price?: number;
+  stock?: number;
+  category?: string;
+  images?: string[];
+}
+
+export const productService = {
+  getAll: (params?: { page?: number; limit?: number; search?: string; category?: string; minPrice?: number; maxPrice?: number }) => 
+    apiRequest<PaginatedResponse<Product>>('/products', 'GET', undefined, params),
+  
+  getById: (id: string) => 
+    apiRequest<Product>(`/products/${id}`),
+  
+  create: (data: ProductCreateData) => 
+    apiRequest<Product>('/products', 'POST', data),
+  
+  update: (id: string, data: ProductUpdateData) => 
+    apiRequest<Product>(`/products/${id}`, 'PUT', data),
+  
+  delete: (id: string) => 
+    apiRequest(`/products/${id}`, 'DELETE'),
+    
+  getCategories: () => 
+    apiRequest<string[]>('/products/categories')
+};
+
+// Сервис для работы с аналитикой и отчетами
+export interface DashboardStats {
+  totalUsers: number;
+  totalOrders: number;
+  totalRevenue: number;
+  averageOrderValue: number;
+  recentOrders: Order[];
+  topProducts: (Product & { soldCount: number })[];
+  userGrowth: { date: string; count: number }[];
+  revenueTrend: { date: string; revenue: number }[];
+}
+
+export const analyticsService = {
+  getDashboardStats: () => 
+    apiRequest<DashboardStats>('/analytics/dashboard'),
+    
+  getUserStats: (params?: { from?: string; to?: string }) => 
+    apiRequest('/analytics/users', 'GET', undefined, params),
+    
+  getOrderStats: (params?: { from?: string; to?: string }) => 
+    apiRequest('/analytics/orders', 'GET', undefined, params),
+    
+  getRevenueStats: (params?: { from?: string; to?: string; groupBy?: 'day' | 'week' | 'month' }) => 
+    apiRequest('/analytics/revenue', 'GET', undefined, params)
+};
+
+// Экспортируем единый интерфейс API
+const api = {
   auth: authService,
   users: userService,
   orders: orderService,
+  products: productService,
+  analytics: analyticsService
 };
+
+export default api;

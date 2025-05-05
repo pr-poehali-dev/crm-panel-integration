@@ -1,11 +1,11 @@
-
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState } from "react");
 import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
+import { Link } from "react-router-dom";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const Register = () => {
   const [name, setName] = useState("");
@@ -13,52 +13,27 @@ const Register = () => {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate();
-  const { toast } = useToast();
+  const [error, setError] = useState("");
+  const { register, isLoading } = useAuth();
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError("");
     
     if (!name || !email || !password || !confirmPassword) {
-      toast({
-        title: "Ошибка",
-        description: "Пожалуйста, заполните все поля",
-        variant: "destructive",
-      });
+      setError("Пожалуйста, заполните все поля");
       return;
     }
     
     if (password !== confirmPassword) {
-      toast({
-        title: "Ошибка",
-        description: "Пароли не совпадают",
-        variant: "destructive",
-      });
+      setError("Пароли не совпадают");
       return;
     }
     
-    setIsLoading(true);
-    
     try {
-      // В реальном приложении здесь будет запрос к API для регистрации
-      // Сейчас просто имитация успешной регистрации
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      toast({
-        title: "Успешно",
-        description: "Аккаунт успешно создан. Теперь вы можете войти в систему.",
-      });
-      
-      navigate("/login");
-    } catch (error) {
-      toast({
-        title: "Ошибка регистрации",
-        description: "Не удалось создать аккаунт. Попробуйте позже.",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
+      await register(name, email, password);
+    } catch (err: any) {
+      setError(err.message || "Произошла ошибка при регистрации");
     }
   };
 
@@ -73,6 +48,12 @@ const Register = () => {
             Создайте аккаунт для доступа к панели управления
           </p>
         </div>
+        
+        {error && (
+          <Alert variant="destructive" className="mt-4">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
         
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="space-y-4 rounded-md shadow-sm">
@@ -155,9 +136,9 @@ const Register = () => {
           <div className="text-center">
             <span className="text-sm">
               Уже есть аккаунт?{" "}
-              <a href="/login" className="font-medium text-primary hover:text-primary/80">
+              <Link to="/login" className="font-medium text-primary hover:text-primary/80">
                 Войти
-              </a>
+              </Link>
             </span>
           </div>
         </form>

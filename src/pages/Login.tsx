@@ -1,56 +1,32 @@
-
-import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useState } from "react");
 import { Eye, EyeOff } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { useToast } from "@/hooks/use-toast";
+import { useAuth } from "@/hooks/use-auth";
+import { Link } from "react-router-dom";
+import { Alert, AlertDescription } from "@/components/ui/alert";
 
 const Login = () => {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+  const [email, setEmail] = useState(""");
+  const [password, setPassword] = useState(""");
   const [showPassword, setShowPassword] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
-  const navigate = useNavigate();
-  const { toast } = useToast();
+  const [error, setError] = useState(""");
+  const { login, isLoading } = useAuth();
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(""");
     
     if (!email || !password) {
-      toast({
-        title: "Ошибка",
-        description: "Пожалуйста, заполните все поля",
-        variant: "destructive",
-      });
+      setError("Пожалуйста, введите email и пароль");
       return;
     }
     
-    setIsLoading(true);
-    
     try {
-      // В реальном приложении здесь будет запрос к API для авторизации
-      // Сейчас просто имитация успешной авторизации
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Сохраняем "токен" в localStorage (для демонстрации)
-      localStorage.setItem("auth-token", "demo-token");
-      
-      toast({
-        title: "Успешно",
-        description: "Вы успешно вошли в систему",
-      });
-      
-      navigate("/");
-    } catch (error) {
-      toast({
-        title: "Ошибка авторизации",
-        description: "Неверный email или пароль",
-        variant: "destructive",
-      });
-    } finally {
-      setIsLoading(false);
+      await login(email, password);
+    } catch (err: any) {
+      setError(err.message || "Произошла ошибка при входе");
     }
   };
 
@@ -65,6 +41,12 @@ const Login = () => {
             Введите свои данные для доступа к панели управления
           </p>
         </div>
+        
+        {error && (
+          <Alert variant="destructive" className="mt-4">
+            <AlertDescription>{error}</AlertDescription>
+          </Alert>
+        )}
         
         <form className="mt-8 space-y-6" onSubmit={handleSubmit}>
           <div className="space-y-4 rounded-md shadow-sm">
@@ -133,16 +115,16 @@ const Login = () => {
               className="w-full"
               disabled={isLoading}
             >
-              {isLoading ? "Вход..." : "Войти"}
+              {isLoading ? "Выполняется вход..." : "Войти"}
             </Button>
           </div>
           
           <div className="text-center">
             <span className="text-sm">
               Нет аккаунта?{" "}
-              <a href="/register" className="font-medium text-primary hover:text-primary/80">
+              <Link to="/register" className="font-medium text-primary hover:text-primary/80">
                 Зарегистрироваться
-              </a>
+              </Link>
             </span>
           </div>
         </form>
